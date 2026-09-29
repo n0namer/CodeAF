@@ -277,3 +277,9 @@ lists every field and every way to turn it off.
 </details>
 
 Built by the [AgentField](https://github.com/Agent-Field/agentfield) team.
+
+<!-- shared-ruflo-factory-readme:start -->
+## AI development workflow
+
+Fresh AI sessions should start with the [Ruflo Factory Operator skill](https://github.com/n0namer/BMAD-MNNZ/blob/main/.agents/skills/ruflo-factory-operator/SKILL.md). On A55/shared Factory hosts, also read D:\Users\NIKITA\Documents\DEV\ruflo\docs\RUFLO_FACTORY_OPERATOR.md and D:\Users\NIKITA\Documents\DEV\ruflo\docs\AI_FACTORY_BOOTSTRAP.md. The shared Factory defines the planning/orchestration/readiness/acceptance workflow; this repository's AGENTS/BMad/Git/tests/runtime evidence remains authoritative for project facts and constraints.
+<!-- shared-ruflo-factory-readme:end -->
