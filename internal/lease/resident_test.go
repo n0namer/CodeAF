@@ -3,9 +3,10 @@ package lease
 import (
 	"os"
 	"path/filepath"
-	"syscall"
 	"testing"
 	"time"
+
+	"github.com/Agent-Field/codeaf/internal/filelock"
 )
 
 func TestAcquireResidentAndRelease(t *testing.T) {
@@ -281,7 +282,7 @@ func TestALiveLegacyHolderStillOwnsTheRole(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer legacy.Close()
-	if err := syscall.Flock(int(legacy.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := filelock.Lock(legacy, true, true); err != nil {
 		t.Fatal(err)
 	}
 	if err := writeResident(legacy, Resident{PID: os.Getpid(), Host: "here", Surface: "chat"}); err != nil {
@@ -298,7 +299,7 @@ func TestALiveLegacyHolderStillOwnsTheRole(t *testing.T) {
 	}
 
 	// Once it lets go, the role is free and store-keyed like everything else.
-	if err := syscall.Flock(int(legacy.Fd()), syscall.LOCK_UN); err != nil {
+	if err := filelock.Unlock(legacy); err != nil {
 		t.Fatal(err)
 	}
 	release, holder, err = AcquireResident(store, "do")
