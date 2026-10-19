@@ -7,9 +7,9 @@ import (
 	"testing"
 
 	"github.com/Agent-Field/codeaf/internal/config"
+	"github.com/Agent-Field/codeaf/internal/filelock"
 	"github.com/Agent-Field/codeaf/internal/home"
 	"github.com/Agent-Field/codeaf/internal/standing"
-	"golang.org/x/sys/unix"
 )
 
 // The door is machinery, not a command, so it must not appear in the list of
@@ -128,9 +128,14 @@ func TestTickLeavesQuietlyWhenAWindowIsAlreadyKeepingWatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer held.Close()
-	if err := unix.Flock(int(held.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+	if err := filelock.Lock(held, true, true); err != nil {
 		t.Fatal(err)
 	}
+	defer func() {
+		if err := filelock.Unlock(held); err != nil {
+			t.Errorf("unlock held tick lock: %v", err)
+		}
+	}()
 	// A pass somebody else is already running is a success, not a failure.
 	if err := runTick(nil); err != nil {
 		t.Fatalf("a held lock was reported as an error: %v", err)
