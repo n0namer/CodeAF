@@ -78,7 +78,14 @@ func Open(path string) (*Store, error) {
 			return nil, collectionsOpenFailure(absolute, err)
 		}
 	}
-	u := url.URL{Scheme: "file", Path: absolute}
+	// SQLite URI paths must use forward slashes and a leading slash before
+	// Windows drive letters. Otherwise net/url treats C: as a host and
+	// modernc/sqlite reports a misleading "out of memory (1)".
+	sqlitePath := filepath.ToSlash(absolute)
+	if filepath.VolumeName(absolute) != "" && !strings.HasPrefix(sqlitePath, "/") {
+		sqlitePath = "/" + sqlitePath
+	}
+	u := url.URL{Scheme: "file", Path: sqlitePath}
 	q := u.Query()
 	// The private file was created above. SQLite must not create another file
 	// with its default permissions if the path is a dangling link or disappears.

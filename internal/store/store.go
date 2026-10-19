@@ -721,7 +721,14 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("could not open %s: %w", storePathForPerson(absolute), pathReason(err))
 	}
 
-	u := url.URL{Scheme: "file", Path: absolute}
+	// SQLite URI paths must use forward slashes and a leading slash before
+	// Windows drive letters. Otherwise net/url treats C: as a host and
+	// modernc/sqlite reports a misleading "out of memory (1)".
+	sqlitePath := filepath.ToSlash(absolute)
+	if filepath.VolumeName(absolute) != "" && !strings.HasPrefix(sqlitePath, "/") {
+		sqlitePath = "/" + sqlitePath
+	}
+	u := url.URL{Scheme: "file", Path: sqlitePath}
 	query := u.Query()
 	// busy_timeout is SQLite's own patience and nothing else's: no caller waits
 	// it out any more, because every write goes through [Store.beginWrite] and
