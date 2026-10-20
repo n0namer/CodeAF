@@ -4,9 +4,12 @@ package filelock
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"golang.org/x/sys/windows"
 )
 
 func TestWindowsLockedPayloadRemainsReadable(t *testing.T) {
@@ -24,10 +27,10 @@ func TestWindowsLockedPayloadRemainsReadable(t *testing.T) {
 			if err := Lock(file, true, true); err != nil {
 				t.Fatal(err)
 			}
-			defer Unlock(file)
-			got, err := os.ReadFile(path)
-			if err != nil || string(got) != payload {
-				t.Fatalf("read payload under exclusive lock: got %q, err %v", got, err)
+			got := make([]byte, len(payload))
+			n, err := file.ReadAt(got, 0)
+			if err != nil || n != len(payload) || string(got) != payload {
+				t.Fatalf("read payload through lock handle: got %q, n %d, err %v", got, n, err)
 			}
 			info, err := file.Stat()
 			if err != nil {
@@ -35,6 +38,13 @@ func TestWindowsLockedPayloadRemainsReadable(t *testing.T) {
 			}
 			if info.Size() != int64(len(payload)) {
 				t.Fatalf("lock changed file size: got %d, want %d", info.Size(), len(payload))
+			}
+			if err := Unlock(file); err != nil {
+				t.Fatal(err)
+			}
+			got, err = os.ReadFile(path)
+			if err != nil || string(got) != payload {
+				t.Fatalf("payload after unlock: got %q, err %v", got, err)
 			}
 		})
 	}
@@ -97,5 +107,63 @@ func TestWindowsClosedHandleErrorsAreNotBusy(t *testing.T) {
 	}
 	if IsBusy(nil) {
 		t.Fatal("nil error classified as busy")
+	}
+}
+
+func TestWindowsLockRollbackFailureIsNotBusy(t *testing.T) {
+	acquireErr := windows.ERROR_LOCK_VIOLATION
+	rollbackErr := windows.ERROR_ACCESS_DENIED
+	var calls []uint32
+	lock := func(_ windows.Handle, _, _, _, _ uint32, overlapped *windows.Overlapped) error {
+		calls = append(calls, overlapped.OffsetHigh)
+		if len(calls) == 2 {
+			return acquireErr
+		}
+		return nil
+	}
+	unlock := func(_ windows.Handle, _, _, _ uint32, overlapped *windows.Overlapped) error {
+		if overlapped.Offset != 0 || overlapped.OffsetHigh != 0 {
+			t.Fatalf("rollback range = (%d, %d), want byte zero", overlapped.OffsetHigh, overlapped.Offset)
+		}
+		return rollbackErr
+	}
+	err := lockRanges(windows.Handle(1), 0, lock, unlock)
+	if !errors.Is(err, acquireErr) || !errors.Is(err, rollbackErr) {
+		t.Fatalf("rollback error = %v, want both acquisition and rollback causes", err)
+	}
+	if IsBusy(err) {
+		t.Fatalf("rollback error %v classified as busy", err)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("lock calls = %v, want legacy then current range", calls)
+	}
+}
+
+func TestWindowsLockAcquisitionFailureRollsBackFirstRange(t *testing.T) {
+	acquireErr := windows.ERROR_LOCK_VIOLATION
+	var ranges []windows.Overlapped
+	var unlocked *windows.Overlapped
+	lock := func(_ windows.Handle, _, _, _, _ uint32, overlapped *windows.Overlapped) error {
+		ranges = append(ranges, *overlapped)
+		if len(ranges) == 2 {
+			return acquireErr
+		}
+		return nil
+	}
+	unlock := func(_ windows.Handle, _, _, _ uint32, overlapped *windows.Overlapped) error {
+		copy := *overlapped
+		unlocked = &copy
+		return nil
+	}
+
+	err := lockRanges(windows.Handle(1), 0, lock, unlock)
+	if !IsBusy(err) {
+		t.Fatalf("second-range acquisition error = %v, want busy", err)
+	}
+	if len(ranges) != 2 || ranges[0] != (windows.Overlapped{}) || ranges[1] != lockRange() {
+		t.Fatalf("acquired ranges = %#v, want byte zero then high compatibility range", ranges)
+	}
+	if unlocked == nil || *unlocked != (windows.Overlapped{}) {
+		t.Fatalf("rollback range = %#v, want byte zero", unlocked)
 	}
 }
