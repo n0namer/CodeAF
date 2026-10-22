@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"golang.org/x/sys/windows"
 )
 
 func TestWindowsLockedPayloadRemainsReadable(t *testing.T) {
@@ -37,6 +39,31 @@ func TestWindowsLockedPayloadRemainsReadable(t *testing.T) {
 				t.Fatalf("lock changed file size: got %d, want %d", info.Size(), len(payload))
 			}
 		})
+	}
+}
+
+func TestWindowsLegacyByteZeroLockExcludesNewLock(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "resident.lock")
+	legacy, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer legacy.Close()
+	current, err := os.OpenFile(path, os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer current.Close()
+
+	// Builds predating internal/filelock coordinate over byte zero. A current
+	// exclusive lock must conflict with that range on a separate file handle.
+	if err := windows.LockFileEx(windows.Handle(legacy.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &windows.Overlapped{}); err != nil {
+		t.Fatal(err)
+	}
+	defer windows.UnlockFileEx(windows.Handle(legacy.Fd()), 0, 1, 0, &windows.Overlapped{})
+
+	if err := Lock(current, true, true); !IsBusy(err) {
+		t.Fatalf("new lock beside legacy byte-zero holder = %v, want busy", err)
 	}
 }
 

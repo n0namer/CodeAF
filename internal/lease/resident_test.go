@@ -49,6 +49,33 @@ func TestAcquireResidentReportsConflict(t *testing.T) {
 	}
 }
 
+func TestAcquireResidentFailsClosedOnIncompatibleLiveHolder(t *testing.T) {
+	dir := t.TempDir()
+	store := filepath.Join(dir, "graph.db")
+	path, err := LockPath(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	holder, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer holder.Close()
+	if err := filelock.Lock(holder, true, true); err != nil {
+		t.Fatal(err)
+	}
+	defer filelock.Unlock(holder)
+	if _, err := holder.WriteString("incompatible holder payload"); err != nil {
+		t.Fatal(err)
+	}
+
+	release, resident, err := AcquireResident(store, "wake")
+	if err == nil || release != nil || resident != nil {
+		t.Fatalf("acquire beside incompatible live holder = release %v, holder %+v, err %v; want fail closed",
+			release != nil, resident, err)
+	}
+}
+
 func TestProbeResidentIgnoresStalePayload(t *testing.T) {
 	dir := t.TempDir()
 	store := filepath.Join(dir, "graph.db")
