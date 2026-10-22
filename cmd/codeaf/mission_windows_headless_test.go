@@ -43,6 +43,7 @@ func TestMissionWindowsHeadlessCLI(t *testing.T) {
 		t.Fatal(err)
 	}
 	broken, fixed := "return 41", "return 42"
+	instruction := "Update answer.go from 41 to 42 and preserve a passing go test ./... result; invocation=resident-lease-exact-compat"
 	answerSource := "package fixture\n\nfunc answer() int {\n\t" + broken + "\n}\n"
 	if err := os.WriteFile(filepath.Join(work, "answer.go"), []byte(answerSource), 0o600); err != nil {
 		t.Fatal(err)
@@ -190,7 +191,7 @@ func TestMissionWindowsHeadlessCLI(t *testing.T) {
 	command := exec.CommandContext(context.Background(), binary,
 		"do", "--json", "--yes-spend", "--timeout", "90s", "--dir", work, "--db", journal,
 		"--model", "local/test-model", "--plan-model", "local/test-model",
-		"Update answer.go from 41 to 42 and preserve a passing go test ./... result")
+		instruction)
 	command.Dir = work
 	command.Env = isolatedMissionEnv(os.Environ(), map[string]string{
 		"HOME": profile, "CODEAF_HOME": state, "CODEAF_PROFILE_DIR": profile,
@@ -254,9 +255,39 @@ func TestMissionWindowsHeadlessCLI(t *testing.T) {
 		t.Fatalf("reopen CLI journal: %v", err)
 	}
 	seq, err := reopened.LatestEventSeq()
+	if err != nil {
+		_ = reopened.Close()
+		t.Fatalf("read reopened journal watermark: %v", err)
+	}
+	nodes, nodesErr := reopened.Nodes()
+	events, eventsErr := reopened.Events(0, 0)
 	closeErr := reopened.Close()
-	if err != nil || closeErr != nil || seq == 0 {
-		t.Fatalf("reopened journal has no durable events (seq=%d, read=%v, close=%v)", seq, err, closeErr)
+	if nodesErr != nil || eventsErr != nil || closeErr != nil || seq == 0 {
+		t.Fatalf("read reopened journal evidence (seq=%d, nodes=%v, events=%v, close=%v)", seq, nodesErr, eventsErr, closeErr)
+	}
+	var correlated store.Node
+	for _, node := range nodes {
+		if node.Provenance.Intent == instruction {
+			correlated = node
+			break
+		}
+	}
+	if correlated.ID == "" || correlated.CreatedSeq <= 0 || correlated.CreatedSeq > seq {
+		t.Fatalf("reopened journal has no node with this invocation's instruction provenance: node=%+v watermark=%d", correlated, seq)
+	}
+	var admitted bool
+	var previous int64
+	for _, event := range events {
+		if event.Seq <= previous || event.Seq > seq {
+			t.Fatalf("reopened event sequence is not strictly increasing within watermark %d: previous=%d event=%+v", seq, previous, event)
+		}
+		previous = event.Seq
+		if event.Seq == correlated.CreatedSeq && event.NodeID == correlated.ID && event.Kind == store.EventSubtreeSpliced {
+			admitted = true
+		}
+	}
+	if !admitted {
+		t.Fatalf("reopened journal has no splice event correlated to invocation node %q at sequence %d", correlated.ID, correlated.CreatedSeq)
 	}
 }
 
